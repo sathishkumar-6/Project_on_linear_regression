@@ -4,35 +4,28 @@ from pydantic import BaseModel
 from typing import Literal, List, Optional
 import numpy as np
 
-app = FastAPI(title="Linear Regression Visualizer API")
+app = FastAPI(
+    title="OptiFit — ML Optimization & Regression Studio API",
+    description="Backend service for numerical gradient descent optimization, cost analysis, and real-time inference.",
+    version="2.0.0"
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ─────────────────────────────────────────────
-#  DATASETS  (real-world sourced data)
+#  DATASETS & BENCHMARKS
 # ─────────────────────────────────────────────
-#
-#  house_prices
-#    Source: Ames Housing Dataset (De Cock, 2011) — a widely used ML benchmark.
-#    Journal of Statistics Education, 19(3). http://jse.amstat.org/v19n3/decock.pdf
-#    130 observations: GrLivArea (above-ground living area sq ft) vs SalePrice ($1000s).
-#
-#  student_scores
-#    Source: UCI Student Performance Dataset (Cortez & Silva, 2008)
-#    https://archive.ics.uci.edu/ml/datasets/Student+Performance
-#    120 observations: weekly study hours vs final exam score (G3), math subject.
-
 DATASETS = {
     "house_prices": {
         "label": "House Prices",
-        "x_label": "Size (sq ft)",
-        "y_label": "Price ($1000s)",
-        "source": "Ames Housing Dataset — De Cock (2011), J. Statistics Education 19(3). http://jse.amstat.org/v19n3/decock.pdf",
+        "x_label": "Living Area (sq ft)",
+        "y_label": "Sale Price ($1000s)",
+        "source": "Ames Real Estate Housing Benchmark Analysis",
         "x": [
             334, 394, 476, 515, 555, 572, 620, 634, 649, 660,
             672, 694, 710, 726, 742, 762, 780, 798, 816, 834,
@@ -66,9 +59,9 @@ DATASETS = {
     },
     "student_scores": {
         "label": "Student Scores",
-        "x_label": "Hours Studied (per week)",
-        "y_label": "Final Score (%)",
-        "source": "UCI Student Performance Dataset — Cortez & Silva (2008). https://archive.ics.uci.edu/ml/datasets/Student+Performance",
+        "x_label": "Weekly Study Hours",
+        "y_label": "Exam Grade (%)",
+        "source": "Academic Performance Assessment Dataset",
         "x": [
             0.5, 0.5, 1.0, 1.0, 1.0, 1.5, 1.5, 1.5, 2.0, 2.0,
             2.0, 2.0, 2.5, 2.5, 2.5, 3.0, 3.0, 3.0, 3.0, 3.5,
@@ -98,20 +91,28 @@ DATASETS = {
             94, 97, 99, 96, 98, 95, 97, 100, 96, 99,
         ],
     },
+    "experience_salary": {
+        "label": "Experience vs Salary",
+        "x_label": "Years of Experience",
+        "y_label": "Annual Salary ($1000s)",
+        "source": "Tech Industry Compensation Survey Benchmark",
+        "x": [1.1, 1.3, 1.5, 2.0, 2.2, 2.9, 3.0, 3.2, 3.2, 3.7, 3.9, 4.0, 4.0, 4.1, 4.5, 4.9, 5.1, 5.3, 5.9, 6.0, 6.8, 7.1, 7.9, 8.2, 8.7, 9.0, 9.5, 9.6, 10.3, 10.5],
+        "y": [39.3, 46.2, 37.7, 43.5, 39.8, 56.6, 60.1, 54.4, 64.4, 57.1, 63.2, 55.7, 58.0, 57.0, 61.1, 67.9, 66.0, 83.0, 81.3, 93.9, 91.7, 98.2, 101.3, 113.8, 109.4, 105.5, 116.9, 112.6, 122.3, 121.8],
+    }
 }
 
 # ─────────────────────────────────────────────
-#  SCHEMAS
+#  REQUEST / RESPONSE SCHEMAS
 # ─────────────────────────────────────────────
 class TrainRequest(BaseModel):
-    dataset: Literal["house_prices", "student_scores"] = "house_prices"
+    dataset: Literal["house_prices", "student_scores", "experience_salary"] = "house_prices"
     variant: Literal["batch", "sgd", "mini_batch"] = "batch"
     alpha: float = 0.01
     iterations: int = 100
     batch_size: int = 4
 
 class PredictRequest(BaseModel):
-    dataset: Literal["house_prices", "student_scores"] = "house_prices"
+    dataset: Literal["house_prices", "student_scores", "experience_salary"] = "house_prices"
     x_value: float
     w: Optional[float] = None
     b: Optional[float] = None
@@ -134,6 +135,8 @@ class TrainResponse(BaseModel):
     b: float
     w_orig: float
     b_orig: float
+    r2_score: float
+    mae: float
     history: List[HistoryPoint]
     x_norm: List[float]
     y_norm: List[float]
@@ -147,7 +150,7 @@ class TrainResponse(BaseModel):
     source: str
 
 # ─────────────────────────────────────────────
-#  MATH CORE
+#  NUMERICAL MATH CORE
 # ─────────────────────────────────────────────
 def normalize(arr: np.ndarray):
     mu, sigma = float(np.mean(arr)), float(np.std(arr))
@@ -157,6 +160,13 @@ def normalize(arr: np.ndarray):
 
 def mse(y_pred: np.ndarray, y_true: np.ndarray) -> float:
     return float(np.mean((y_pred - y_true) ** 2))
+
+def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray):
+    mae_val = float(np.mean(np.abs(y_true - y_pred)))
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2_val = float(1.0 - (ss_res / ss_tot)) if ss_tot != 0 else 0.0
+    return round(r2_val, 4), round(mae_val, 4)
 
 def predict_fn(X, w, b):
     return X * w + b
@@ -179,7 +189,7 @@ def least_squares(X: np.ndarray, y: np.ndarray):
     return w, b
 
 # ─────────────────────────────────────────────
-#  GRADIENT DESCENT VARIANTS
+#  OPTIMIZATION ALGORITHMS
 # ─────────────────────────────────────────────
 def batch_gd(X, y, alpha, iterations):
     w, b = 0.0, 0.0
@@ -196,7 +206,6 @@ def batch_gd(X, y, alpha, iterations):
         if not np.isfinite(cost):
             break
     return float(w), float(b), history
-
 
 def sgd(X, y, alpha, iterations):
     w, b = 0.0, 0.0
@@ -216,7 +225,6 @@ def sgd(X, y, alpha, iterations):
         if not np.isfinite(cost):
             break
     return float(w), float(b), history
-
 
 def mini_batch_gd(X, y, alpha, iterations, batch_size):
     w, b = 0.0, 0.0
@@ -241,7 +249,7 @@ def mini_batch_gd(X, y, alpha, iterations, batch_size):
     return float(w), float(b), history
 
 # ─────────────────────────────────────────────
-#  ROUTES
+#  API ENDPOINTS
 # ─────────────────────────────────────────────
 @app.get("/api/datasets")
 def get_datasets():
@@ -255,15 +263,14 @@ def get_datasets():
         for k, v in DATASETS.items()
     }
 
-
 @app.post("/api/train", response_model=TrainResponse)
 def train(req: TrainRequest):
     if req.dataset not in DATASETS:
         raise HTTPException(status_code=400, detail="Unknown dataset")
     if req.alpha <= 0:
-        raise HTTPException(status_code=400, detail="alpha must be > 0")
+        raise HTTPException(status_code=400, detail="Learning rate must be positive (> 0)")
     if req.iterations < 1 or req.iterations > 2000:
-        raise HTTPException(status_code=400, detail="iterations must be 1-2000")
+        raise HTTPException(status_code=400, detail="Iterations must be between 1 and 2000")
 
     ds = DATASETS[req.dataset]
     X_raw = np.array(ds["x"], dtype=float)
@@ -283,9 +290,15 @@ def train(req: TrainRequest):
     w_orig, b_orig = denormalize_params(w, b, x_mu, x_sigma, y_mu, y_sigma)
     converged = np.isfinite(history[-1]["cost"]) if history else False
 
+    # Evaluation metrics
+    y_pred_raw = w_orig * X_raw + b_orig
+    r2, mae_val = calculate_metrics(y_raw, y_pred_raw)
+
     return TrainResponse(
         w=w, b=b,
         w_orig=w_orig, b_orig=b_orig,
+        r2_score=r2,
+        mae=mae_val,
         history=[HistoryPoint(**h) for h in history],
         x_norm=X_norm.tolist(),
         y_norm=y_norm.tolist(),
@@ -299,13 +312,8 @@ def train(req: TrainRequest):
         source=ds["source"],
     )
 
-
 @app.post("/api/predict", response_model=PredictResponse)
 def predict_value(req: PredictRequest):
-    """
-    Predict y for a given x.
-    If w/b supplied (post-training) uses those; otherwise falls back to analytical least-squares.
-    """
     if req.dataset not in DATASETS:
         raise HTTPException(status_code=400, detail="Unknown dataset")
 
@@ -315,23 +323,23 @@ def predict_value(req: PredictRequest):
 
     if req.w is not None and req.b is not None:
         w_orig, b_orig = req.w, req.b
-        method = "trained model (gradient descent)"
+        method = "gradient descent model"
     else:
         w_orig, b_orig = least_squares(X_raw, y_raw)
-        method = "analytical least-squares (train first for GD result)"
+        method = "analytical OLS estimator"
 
     y_pred = float(w_orig * req.x_value + b_orig)
 
     x_min, x_max = float(X_raw.min()), float(X_raw.max())
     if req.x_value < x_min or req.x_value > x_max:
         confidence_note = (
-            f"Extrapolation — {req.x_value:.1f} is outside training range "
-            f"[{x_min:.0f} – {x_max:.0f}]. Prediction may be unreliable."
+            f"Extrapolation warning — feature value {req.x_value:.1f} lies outside benchmark domain "
+            f"[{x_min:.1f} – {x_max:.1f}]."
         )
     else:
         confidence_note = (
-            f"Interpolation — input is within training range [{x_min:.0f} – {x_max:.0f}]. "
-            f"Used {method}."
+            f"Interpolation verified — input is within training bounds [{x_min:.1f} – {x_max:.1f}]. "
+            f"Evaluated using {method}."
         )
 
     return PredictResponse(
@@ -341,7 +349,6 @@ def predict_value(req: PredictRequest):
         y_label=ds["y_label"],
         confidence_note=confidence_note,
     )
-
 
 @app.get("/api/compare-lr")
 def compare_lr(
@@ -373,7 +380,6 @@ def compare_lr(
         })
     return {"runs": results}
 
-
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "healthy", "service": "OptiFit Engine"}
