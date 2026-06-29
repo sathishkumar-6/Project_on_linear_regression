@@ -80,12 +80,7 @@ Linear_Regression_project/
 │   ├── index.html
 │   └── package.json
 ├── .gitignore           # Repository exclusion definitions
-├── LICENSE              # MIT License
 └── README.md            # Architecture overview & documentation
 ```
 
----
-
-## 📄 License
-
-Distributed under the MIT License.
+--
